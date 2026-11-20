@@ -71,8 +71,9 @@ summarize() {
     function flush() {
       if (name == "") return
       p = pool(name); total++; cnt[p]++; st[p "|" state]++
-      if (waitframe != "") { blk[p]++; where[p " <- " (blocking == "" ? "(no app frame)" : blocking)]++ }
-      name = ""; state = "?"; blocking = ""; appframe = ""; waitframe = ""
+      if (idle) idl[p]++
+      else if (waitframe != "") { blk[p]++; where[p " <- " (blocking == "" ? "(no app frame)" : blocking)]++ }
+      name = ""; state = "?"; blocking = ""; appframe = ""; waitframe = ""; idle = 0
     }
     /^"/ {
       flush()
@@ -81,6 +82,8 @@ summarize() {
     /java.lang.Thread.State:/ { state = $2; next }
     /^\tat / {
       fr = $2
+      # Idle pool thread waiting for its next task (on JDK 17 this also goes through managedBlock).
+      if (fr ~ /ThreadPoolExecutor\.getTask|ForkJoinPool\.awaitWork|BlockingQueue\.(take|poll)|BlockingDeque\.(take|poll)|SynchronousQueue\.(take|poll)|DelayQueue\.(take|poll)/) idle = 1
       # A thread is "blocking on a future" if its stack waits in Await / managedBlock / resultInf.
       if (fr ~ /scala\.concurrent\.Await|ForkJoinPool\.managedBlock|FutureUtils\.result|Promise\$DefaultPromise\.tryAwait|CompletableFuture\.get|FutureTask\.get/) waitframe = fr
       # First application frame below the wait = the code that asked to block.
@@ -92,14 +95,14 @@ summarize() {
     END {
       flush()
       printf "threads_total=%d\n", total
-      printf "%-48s %6s %9s %8s %8s %13s %15s\n", "pool", "count", "RUNNABLE", "BLOCKED", "WAITING", "TIMED_WAITING", "await-blocking"
+      printf "%-48s %6s %9s %8s %8s %13s %6s %15s\n", "pool", "count", "RUNNABLE", "BLOCKED", "WAITING", "TIMED_WAITING", "idle", "await-blocking"
       n = 0
       for (p in cnt) keys[++n] = p
       # sort pools by count desc (simple insertion sort, n is small)
       for (i = 2; i <= n; i++) { k = keys[i]; j = i - 1; while (j > 0 && cnt[keys[j]] < cnt[k]) { keys[j+1] = keys[j]; j-- } keys[j+1] = k }
       for (i = 1; i <= n && i <= 25; i++) {
         p = keys[i]
-        printf "%-48s %6d %9d %8d %8d %13d %15d\n", substr(p, 1, 48), cnt[p], st[p "|RUNNABLE"], st[p "|BLOCKED"], st[p "|WAITING"], st[p "|TIMED_WAITING"], blk[p]
+        printf "%-48s %6d %9d %8d %8d %13d %6d %15d\n", substr(p, 1, 48), cnt[p], st[p "|RUNNABLE"], st[p "|BLOCKED"], st[p "|WAITING"], st[p "|TIMED_WAITING"], idl[p], blk[p]
       }
       m = 0
       for (w in where) wk[++m] = w
@@ -202,10 +205,9 @@ main_loop() {
   done
 }
 
-mkdir -p "$OUT_DIR"
 case "${1:-run}" in
-  run)     main_loop ;;
-  capture) capture "manual (capture command)"; echo "dumps and summary in $OUT_DIR" ;;
+  run)     mkdir -p "$OUT_DIR"; main_loop ;;
+  capture) mkdir -p "$OUT_DIR"; capture "manual (capture command)"; echo "dumps and summary in $OUT_DIR" ;;
   analyze) shift; for f in "$@"; do summarize "$f"; done ;;
   *)       echo "usage: $0 [run|capture|analyze FILE...]"; exit 2 ;;
 esac
