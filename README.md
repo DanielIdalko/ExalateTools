@@ -45,7 +45,7 @@ while true; do
     echo "--- java process ---"
     JAVA_PID="$(pgrep -o java || true)"
     if [ -n "$JAVA_PID" ]; then
-      ps -o pid,ppid,%cpu,%mem,rss,vsz,nlwp,etime,cmd -p "$JAVA_PID"
+      ps -o pid,ppid,%cpu,%mem,rss,vsz,nlwp,etime,comm -p "$JAVA_PID"
     else
       echo "java process not found"
     fi
